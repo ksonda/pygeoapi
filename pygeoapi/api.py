@@ -1045,6 +1045,8 @@ class API:
             content['collections_path'] = '/'.join(path_info.split('/')[:-2])
             content['startindex'] = startindex
 
+            if p.uri_field is not None:
+                content['uri_field'] = p.uri_field
             if p.title_field is not None:
                 content['title_field'] = p.title_field
             content['id_field'] = p.title_field
@@ -1074,8 +1076,10 @@ class API:
             return headers_, 200, content
         elif format_ == 'jsonld':
             headers_['Content-Type'] = 'application/ld+json'
-            content = geojson2geojsonld(self.config, content, dataset)
-            return headers_, 200, content
+            content = geojson2geojsonld(
+                self.config, content, dataset, id_field=(p.uri_field or 'id')
+            )
+            return headers_, 200, to_json(content, self.pretty_print)
 
         return headers_, 200, to_json(content, self.pretty_print)
 
@@ -1147,24 +1151,25 @@ class API:
             msg = 'identifier not found'
             return self.get_exception(400, headers_, format_, 'NotFound', msg)
 
+        uri = content['properties'].get(p.uri_field) if p.uri_field else \
+            '{}/collections/{}/items/{}'.format(
+                self.config['server']['url'], dataset, identifier)
+
         content['links'] = [{
             'rel': 'self' if not format_ or format_ == 'json' else 'alternate',
             'type': 'application/geo+json',
             'title': 'This document as GeoJSON',
-            'href': '{}/collections/{}/items/{}?f=json'.format(
-                self.config['server']['url'], dataset, identifier)
+            'href': '{}?f=json'.format(uri)
             }, {
             'rel': 'self' if format_ == 'jsonld' else 'alternate',
             'type': 'application/ld+json',
             'title': 'This document as RDF (JSON-LD)',
-            'href': '{}/collections/{}/items/{}?f=jsonld'.format(
-                self.config['server']['url'], dataset, identifier)
+            'href': '{}?f=jsonld'.format(uri)
             }, {
             'rel': 'self' if format_ == 'html' else 'alternate',
             'type': 'text/html',
             'title': 'This document as HTML',
-            'href': '{}/collections/{}/items/{}?f=html'.format(
-                self.config['server']['url'], dataset, identifier)
+            'href': '{}?f=html'.format(uri)
             }, {
             'rel': 'collection',
             'type': 'application/json',
@@ -1174,13 +1179,11 @@ class API:
             }, {
             'rel': 'prev',
             'type': 'application/geo+json',
-            'href': '{}/collections/{}/items/{}'.format(
-                self.config['server']['url'], dataset, identifier)
+            'href': uri
             }, {
             'rel': 'next',
             'type': 'application/geo+json',
-            'href': '{}/collections/{}/items/{}'.format(
-                self.config['server']['url'], dataset, identifier)
+            'href': uri
             }
         ]
 
@@ -1189,6 +1192,8 @@ class API:
 
             content['title'] = collections[dataset]['title']
             content['id_field'] = p.id_field
+            if p.uri_field is not None:
+                content['uri_field'] = p.uri_field
             if p.title_field is not None:
                 content['title_field'] = p.title_field
 
@@ -1199,8 +1204,9 @@ class API:
         elif format_ == 'jsonld':
             headers_['Content-Type'] = 'application/ld+json'
             content = geojson2geojsonld(
-                self.config, content, dataset, identifier=identifier
+                self.config, content, dataset, uri, (p.uri_field or 'id')
             )
+            content = to_json(content, self.pretty_print)
             return headers_, 200, content
 
         return headers_, 200, to_json(content, self.pretty_print)
@@ -2302,20 +2308,17 @@ tiles/{{{}}}/{{{}}}/{{{}}}/{{{}}}?f=mvt'
                 400, headers_, format_, 'InvalidParameterValue', msg)
 
         id_ = 'pygeoapi-stac'
-        stac_version = '0.6.2'
+        stac_version = '1.0.0-rc.2'
         stac_url = os.path.join(self.config['server']['url'], 'stac')
 
         content = {
             'id': id_,
+            'type': 'Catalog',
             'stac_version': stac_version,
             'title': self.config['metadata']['identification']['title'],
             'description': self.config['metadata']['identification']['description'],  # noqa
-            'license': self.config['metadata']['license']['name'],
-            'providers': [{
-                'name': self.config['metadata']['provider']['name'],
-                'url': self.config['metadata']['provider']['url'],
-            }],
-            'links': []
+            'links': [],
+
         }
 
         stac_collections = filter_dict_by_key_value(self.config['resources'],
@@ -2323,12 +2326,12 @@ tiles/{{{}}}/{{{}}}/{{{}}}/{{{}}}?f=mvt'
 
         for key, value in stac_collections.items():
             content['links'].append({
-                'rel': 'collection',
+                'rel': 'child',
                 'href': '{}/{}?f=json'.format(stac_url, key),
                 'type': 'application/json'
             })
             content['links'].append({
-                'rel': 'collection',
+                'rel': 'child',
                 'href': '{}/{}'.format(stac_url, key),
                 'type': 'text/html'
             })
@@ -2373,14 +2376,14 @@ tiles/{{{}}}/{{{}}}/{{{}}}/{{{}}}?f=mvt'
                 500, headers_, format_, 'NoApplicableCode', msg)
 
         id_ = '{}-stac'.format(dataset)
-        stac_version = '0.6.2'
+        stac_version = '1.0.0-rc.2'
         description = stac_collections[dataset]['description']
 
         content = {
             'id': id_,
+            'type': 'Catalog',
             'stac_version': stac_version,
             'description': description,
-            'extent': stac_collections[dataset]['extents'],
             'links': []
         }
         try:
